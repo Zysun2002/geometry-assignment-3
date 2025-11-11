@@ -18,7 +18,6 @@ namespace minimesh
 namespace mohecore
 {
 
-// Implementation of Quadric methods
 Quadric::Quadric() : Q(Eigen::Matrix4d::Zero()) {}
 
 Quadric::Quadric(const Eigen::Vector4d& plane) : Q(Eigen::Matrix4d::Zero()) 
@@ -34,21 +33,18 @@ Quadric Quadric::operator+(const Quadric& other) const
     return result;
 }
 
-// Compute error for a vertex position
 double Quadric::computeError(const Eigen::Vector3d& v) const 
 {
     Eigen::Vector4d vh(v.x(), v.y(), v.z(), 1.0);
     return vh.transpose() * Q * vh;
 }
 
-// Find optimal vertex position for edge collapse
 Eigen::Vector3d Quadric::findOptimalPosition(const Eigen::Vector3d& v1, const Eigen::Vector3d& v2) const 
 {
-    // Try to solve Q * v = 0 for the optimal position
     Eigen::Matrix3d A = Q.block<3,3>(0,0);
     Eigen::Vector3d b = -Q.block<3,1>(0,3);
     
-    // Check if A is invertible
+    // A is invertible
     Eigen::FullPivLU<Eigen::Matrix3d> lu(A);
     if (lu.isInvertible()) 
     {
@@ -56,7 +52,7 @@ Eigen::Vector3d Quadric::findOptimalPosition(const Eigen::Vector3d& v1, const Ei
     } 
     else 
     {
-        // If not invertible, choose the position with minimum error among v1, v2, and midpoint
+        // use midpoint otherwise
         Eigen::Vector3d midpoint = 0.5 * (v1 + v2);
         double error1 = computeError(v1);
         double error2 = computeError(v2);
@@ -68,13 +64,11 @@ Eigen::Vector3d Quadric::findOptimalPosition(const Eigen::Vector3d& v1, const Ei
     }
 }
 
-// Implementation of EdgeCollapse methods
 bool EdgeCollapse::operator>(const EdgeCollapse& other) const 
 {
     return cost > other.cost;
 }
 
-// Helper function to compute plane equation from triangle
 Eigen::Vector4d computePlaneEquation(const Eigen::Vector3d& p1, const Eigen::Vector3d& p2, const Eigen::Vector3d& p3) 
 {
     Eigen::Vector3d v1 = p2 - p1;
@@ -155,7 +149,6 @@ bool Simplifier::simplify_test_ahead(int num_faces_to_simplify)
         {
             collapses_performed++;
             
-            // Add new edges around the collapsed vertex to the queue
             updateEdgeQueue(collapse.v1, vertex_quadrics, edge_queue, processed_edges);
             
             if (collapses_performed % 1 == 0) 
@@ -174,9 +167,9 @@ bool Simplifier::simplify_test_ahead(int num_faces_to_simplify)
     return true;
 }
 
+// not use anymore
 bool Simplifier::simplify_try_before_commit(int target_faces)
 {
-    // Initialize proxy mesh as a copy of the original
     initializeProxyMesh();
     
     // Store original number of faces
@@ -213,18 +206,15 @@ bool Simplifier::simplify_try_before_commit(int target_faces)
             continue;
         }
 
-        // First, try the collapse on the proxy mesh
+        // try the collapse on the proxy mesh
         if (performEdgeCollapse(proxy_mesh(), collapse, vertex_quadrics)) 
         {
-            // Check if the proxy mesh maintains manifold topology
             if (checkProxyManifold(proxy_mesh()))
             {
-                // If valid, apply the same change to the original mesh
                 if (performEdgeCollapse(mesh(), collapse, vertex_quadrics)) 
                 {
                     collapses_performed++;
                     
-                    // Add new edges around the collapsed vertex to the queue
                     updateEdgeQueue(collapse.v1, vertex_quadrics, edge_queue, processed_edges);
                     
                     if (collapses_performed % 1 == 0) 
@@ -242,7 +232,6 @@ bool Simplifier::simplify_try_before_commit(int target_faces)
             } 
             else 
             {
-                // If invalid, restore the proxy mesh from the original
                 std::cout << "Collapse " << collapse.v1 << " -> " << collapse.v2 
                          << " rejected due to manifold violation" << std::endl;
                 copyMeshToProxy();
@@ -250,7 +239,6 @@ bool Simplifier::simplify_try_before_commit(int target_faces)
             }
         }
         else{
-            // Collapse could not be performed on proxy
             std::cout << "Collapse " << collapse.v1 << " -> " << collapse.v2 
                       << " could not be performed on proxy mesh" << std::endl;
             copyMeshToProxy();
@@ -265,7 +253,7 @@ bool Simplifier::simplify_try_before_commit(int target_faces)
 
 void Simplifier::initializeVertexQuadrics(std::map<int, Quadric>& vertex_quadrics)
 {
-    // Initialize all vertices with zero quadrics
+    // initialize with zero quadrics
     for (int v_idx = 0; v_idx < mesh().n_total_vertices(); ++v_idx) 
     {
         auto vertex = mesh().vertex_at(v_idx);
@@ -314,7 +302,6 @@ void Simplifier::buildInitialEdgeQueue(const std::map<int, Quadric>& vertex_quad
         int v1 = he.origin().index();
         int v2 = he.dest().index();
         
-        // Ensure we only process each edge once (use smaller vertex index first)
         if (v1 > v2) std::swap(v1, v2);
         
         if (processed_edges.find({v1, v2}) != processed_edges.end()) 
@@ -323,7 +310,6 @@ void Simplifier::buildInitialEdgeQueue(const std::map<int, Quadric>& vertex_quad
         }
         processed_edges.insert({v1, v2});
         
-        // Compute collapse cost
         EdgeCollapse collapse = computeEdgeCollapse(v1, v2, he_idx, vertex_quadrics);
         if (collapse.cost < std::numeric_limits<double>::infinity()) 
         {
@@ -332,7 +318,7 @@ void Simplifier::buildInitialEdgeQueue(const std::map<int, Quadric>& vertex_quad
     }
 }
 
-// Compute the cost and optimal position for collapsing an edge
+//  cost and optimal position for collapsing an edge
 EdgeCollapse Simplifier::computeEdgeCollapse(int v1, int v2, int he_idx, const std::map<int, Quadric>& vertex_quadrics)
 {
     EdgeCollapse collapse;
@@ -340,7 +326,6 @@ EdgeCollapse Simplifier::computeEdgeCollapse(int v1, int v2, int he_idx, const s
     collapse.v1 = v1;
     collapse.v2 = v2;
     
-    // Combined quadric
     auto it1 = vertex_quadrics.find(v1);
     auto it2 = vertex_quadrics.find(v2);
     
@@ -352,7 +337,7 @@ EdgeCollapse Simplifier::computeEdgeCollapse(int v1, int v2, int he_idx, const s
     
     Quadric combined = it1->second + it2->second;
     
-    // Find optimal position
+    // optimal position
     Eigen::Vector3d pos1 = mesh().vertex_at(v1).xyz();
     Eigen::Vector3d pos2 = mesh().vertex_at(v2).xyz();
     
@@ -362,7 +347,7 @@ EdgeCollapse Simplifier::computeEdgeCollapse(int v1, int v2, int he_idx, const s
     return collapse;
 }
 
-// Check if an edge collapse is still valid
+// if an edge collapse is still valid
 bool Simplifier::isValidCollapse(const EdgeCollapse& collapse)
 {
     auto v1 = mesh().vertex_at(collapse.v1);
@@ -395,7 +380,7 @@ bool Simplifier::isValidCollapse(const EdgeCollapse& collapse)
     return false;
 }
 
-// Perform the actual edge collapse
+// perform edge collapse
 bool Simplifier::performEdgeCollapse(Mesh_connectivity& mesh, EdgeCollapse& collapse, std::map<int, Quadric>& vertex_quadrics)
 {
 
@@ -447,17 +432,15 @@ void Simplifier::checkVertexAssociatedHalfEdges(Mesh_connectivity& mesh,int half
 }
 
 
-// Handle the topological aspects of edge collapse
+// update connectivity
 bool Simplifier::collapseEdgeTopology(Mesh_connectivity & mesh, int he_idx, int v_keep, int v_remove)
 {
     auto he = mesh.half_edge_at(he_idx);
     auto he_twin = he.twin();
     
-    // Get the faces that will be removed
     auto f1 = he.face();
     auto f2 = he_twin.face();
     
-    // Get all half-edges in the triangles that will be removed
     auto he1_next = he.next();
     auto he1_prev = he.prev();
     auto he2_next = he_twin.next();
@@ -636,10 +619,9 @@ bool Simplifier::wouldCreateNonManifold(int v1, int v2)
     return false; 
 }
 
-// Initialize proxy mesh as a copy of the original mesh
+// not use anymore, initialize proxy mesh as a copy
 void Simplifier::initializeProxyMesh()
 {
-    // Use the copy method available in Mesh_connectivity
     try {
         _proxy_mesh.copy(mesh());
         std::cout << "Proxy mesh initialized successfully with " 
@@ -651,12 +633,10 @@ void Simplifier::initializeProxyMesh()
         
         // Alternative approach: use build_from_triangles
         try {
-            // Extract vertices and triangles from original mesh
             std::vector<double> vertices;
             std::vector<int> triangles;
             std::map<int, int> vertex_map; // old_index -> new_index
             
-            // Collect active vertices
             int new_vertex_count = 0;
             for (int v_idx = 0; v_idx < mesh().n_total_vertices(); ++v_idx) 
             {
@@ -671,19 +651,16 @@ void Simplifier::initializeProxyMesh()
                 }
             }
             
-            // Collect active faces (triangles)
             for (int f_idx = 0; f_idx < mesh().n_total_faces(); ++f_idx) 
             {
                 auto face = mesh().face_at(f_idx);
                 if (face.is_active()) 
                 {
-                    // Get the three vertices of the triangle
                     auto he = face.half_edge();
                     int v1_orig = he.origin().index();
                     int v2_orig = he.next().origin().index();
                     int v3_orig = he.next().next().origin().index();
                     
-                    // Map to new vertex indices
                     if (vertex_map.find(v1_orig) != vertex_map.end() &&
                         vertex_map.find(v2_orig) != vertex_map.end() &&
                         vertex_map.find(v3_orig) != vertex_map.end()) 
@@ -710,19 +687,13 @@ void Simplifier::initializeProxyMesh()
     }
 }
 
-// Store original state for rollback 
 void Simplifier::copyMeshToProxy()
 {
-    // Reinitialize proxy mesh as a copy of the current original mesh state
     initializeProxyMesh();
 }
 
-// Copy the proxy mesh back to the original mesh (if needed)
 void Simplifier::copyProxyToMesh()
 {
-    // This implementation depends on whether you want to fully replace the mesh
-    // For now, we'll just update vertex positions since topology operations
-    // are done directly on the original mesh after validation
     
     for (int v_idx = 0; v_idx < std::min(mesh().n_total_vertices(), _proxy_mesh.n_total_vertices()); ++v_idx) 
     {
@@ -736,14 +707,9 @@ void Simplifier::copyProxyToMesh()
     }
 }
 
-// Validate that the collapse maintains manifold topology
+// not use anymore
 bool Simplifier::checkProxyManifold(Mesh_connectivity& mesh)
 {
-    // Check manifold properties of the proxy mesh
-    // A manifold mesh has the following properties:
-    // 1. Each edge is shared by at most 2 faces
-    // 2. The faces around each vertex form a single connected component
-    // 3. No vertex has excessive degree (optional check)
     
     // Check edge-face relationships
     std::map<std::pair<int,int>, int> edge_face_count;
@@ -812,11 +778,11 @@ std::vector<EdgeCollapse> Simplifier::getLowestCostEdges(int num_edges)
 {
     std::vector<EdgeCollapse> result;
     
-    // Initialize quadrics for all vertices
+    // initialize quadrics for all vertices
     std::map<int, Quadric> vertex_quadrics;
     initializeVertexQuadrics(vertex_quadrics);
     
-    // Build priority queue of edge collapses
+    // priority queue 
     std::priority_queue<EdgeCollapse, std::vector<EdgeCollapse>, std::greater<EdgeCollapse>> edge_queue;
     std::set<std::pair<int,int>> processed_edges;
     
@@ -827,11 +793,10 @@ std::vector<EdgeCollapse> Simplifier::getLowestCostEdges(int num_edges)
         EdgeCollapse collapse = edge_queue.top();
         edge_queue.pop();
         
-        // Only add valid collapses
+  
         if (isValidCollapse(collapse)) {
             result.push_back(collapse);
         } else {
-            // If this collapse is invalid, try the next one
             --i;
         }
     }
@@ -839,7 +804,6 @@ std::vector<EdgeCollapse> Simplifier::getLowestCostEdges(int num_edges)
     return result;
 }
 
-// Create vertex colors to highlight edges with lowest cost
 Eigen::Matrix4Xf Simplifier::createEdgeCostVertexColors(const std::vector<EdgeCollapse>& lowest_cost_edges,
                                                         Mesh_connectivity::Defragmentation_maps& defrag)
 {
@@ -847,10 +811,10 @@ Eigen::Matrix4Xf Simplifier::createEdgeCostVertexColors(const std::vector<EdgeCo
     
     // Default color: light gray
     for (int i = 0; i < mesh().n_active_vertices(); ++i) {
-        colors(0, i) = 0.8f; // R
-        colors(1, i) = 0.8f; // G  
-        colors(2, i) = 0.8f; // B
-        colors(3, i) = 1.0f; // A
+        colors(0, i) = 0.8f; 
+        colors(1, i) = 0.8f; 
+        colors(2, i) = 0.8f; 
+        colors(3, i) = 1.0f; 
     }
     
     // Priority tracking: 0 = default, 1 = yellow, 2 = orange, 3 = red

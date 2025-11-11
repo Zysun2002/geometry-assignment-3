@@ -29,6 +29,8 @@ set(SOURCE_FILES
   mohe/mesh_modifier.cpp
   mohe/mesh_simplification.hpp
   mohe/mesh_simplification.cpp
+  mohe/laplacian_deformation.hpp
+  mohe/laplacian_deformation.cpp
  )
 
  

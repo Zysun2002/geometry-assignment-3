@@ -4,6 +4,10 @@
 #include <iostream>
 #include <memory>
 #include <cstring>
+#include <vector>
+#include <map>
+#include <set>
+#include <algorithm>
 
 // eigen
 #include <Eigen/Core>
@@ -17,6 +21,7 @@
 #include <minimesh/core/util/foldertools.hpp>
 #include <minimesh/core/util/numbers.hpp>
 #include <minimesh/core/mohe/mesh_simplification.hpp>
+#include <minimesh/core/mohe/laplacian_deformation.hpp>
 
 // gui
 #include <minimesh/viz/mesh_viewer.hpp>
@@ -34,6 +39,7 @@ namespace globalvars
 {
 Mesh_viewer viewer;
 mohecore::Mesh_connectivity mesh;
+mohecore::Mesh_connectivity original_mesh;  // Store original mesh
 //
 int glut_main_window_id;
 //
@@ -42,11 +48,25 @@ GLUI * glui;
 int num_entities_to_simplify;
 //
 Eigen::Matrix3Xd displaced_vertex_positions;
+Eigen::Matrix3Xd original_vertex_positions;
+
+// Laplacian deformation variables
+std::vector<int> fixed_handles;        // Indices of fixed vertices
+std::vector<int> movable_handles;      // Indices of movable vertices
+std::map<int, Eigen::Vector3d> handle_displacements;  // Displacement for each movable handle
+int deformation_mode = 0;  // 0 = off, 1 = on (for GLUI checkbox)
+int fix_vertex_mode = 0;   // 0 = off, 1 = on (for fixing vertices)
+int selected_handle = -1;
+int weight_choice = 0;  // 0 = cotangent, 1 = uniform
 
 std::string subdivision_type;
 
 }
 
+// Forward declarations
+namespace freeglutcallback {
+	void update_handle_visualization();
+}
 
 // ======================================================
 //              FREEGLUT CALL BACKS
@@ -96,15 +116,51 @@ void mouse_pushed(int button, int state, int x, int y)
 	should_redraw = should_redraw || globalvars::viewer.mouse_pushed(button, state, x, y);
 
 	//
-	// NOTE: Sample of using Mesh_viewer for MESH DEFORMATION ASSINGMENT
-	// Here is an example of how to use the selection feedback
+	// Handle vertex selection for fixing
 	//
 	{
 		int clicked_on_vertex;
 		bool did_user_click;
 		globalvars::viewer.get_and_clear_vertex_selection(did_user_click, clicked_on_vertex);
-		if(did_user_click)
-			printf("User just clicked on vertex %d \n", clicked_on_vertex);
+		
+		// If in fix vertex mode, add/remove vertex from fixed handles
+		if(did_user_click && globalvars::fix_vertex_mode && clicked_on_vertex >= 0)
+		{
+			auto it = std::find(globalvars::fixed_handles.begin(), 
+			                   globalvars::fixed_handles.end(), 
+			                   clicked_on_vertex);
+			if(it != globalvars::fixed_handles.end())
+			{
+				// Remove if already fixed
+				globalvars::fixed_handles.erase(it);
+				printf("\n[UNFIXED] Removed fixed vertex %d (total fixed: %zu)\n", 
+				       clicked_on_vertex, globalvars::fixed_handles.size());
+			}
+			else
+			{
+				// Add to fixed handles
+				globalvars::fixed_handles.push_back(clicked_on_vertex);
+				
+				// Get and print vertex position
+				auto vert = globalvars::mesh.vertex_at(clicked_on_vertex);
+				Eigen::Vector3d pos = vert.xyz();
+				
+				printf("\n=== FIXED VERTEX DEBUG INFO ===\n");
+				printf("Vertex ID: %d\n", clicked_on_vertex);
+				printf("Position: (%.6f, %.6f, %.6f)\n", pos.x(), pos.y(), pos.z());
+				printf("Total fixed vertices: %zu\n", globalvars::fixed_handles.size());
+				printf("Fixed vertex list: ");
+				for(size_t i = 0; i < globalvars::fixed_handles.size(); ++i) {
+					printf("%d", globalvars::fixed_handles[i]);
+					if(i < globalvars::fixed_handles.size() - 1) printf(", ");
+				}
+				printf("\n==============================\n\n");
+			}
+			
+			// Update visualization to show all fixed vertices
+			freeglutcallback::update_handle_visualization();
+			should_redraw = true;
+		}
 	}
 
 	if(should_redraw)
@@ -117,11 +173,8 @@ void mouse_moved(int x, int y)
 	bool should_redraw = false;
 	should_redraw = should_redraw || globalvars::viewer.mouse_moved(x, y);
 
-
 	//
-	// NOTE: Sample of using Mesh_viewer for MESH DEFORMATION ASSINGMENT
-	// Here is an example of how to use the output from the viewer
-	// If the user is displacing, I will displace the vertex being pulled
+	// Handle vertex displacement with Laplacian deformation
 	//
 	{
 		bool has_pull_performed;
@@ -129,23 +182,114 @@ void mouse_moved(int x, int y)
 		int pulled_vert;
 		globalvars::viewer.get_and_clear_vertex_displacement(has_pull_performed, pull_amount, pulled_vert);
 
-		if(has_pull_performed)
+		if(has_pull_performed && globalvars::deformation_mode)
 		{
 			force_assert(pulled_vert != Mesh_viewer::invalid_index);
 
-			// Get current displacement and apply the change to the mesh renderer
-
-			globalvars::displaced_vertex_positions.col(pulled_vert) += pull_amount.cast<double>();
-			// If the mesh was defragmented, you should have done:
-			// Mesh_connectivity::Defragmentation_maps defrag;
-			// globalvars::mesh.compute_defragmention_maps(defrag);
-			// displaced_vertex_positions.col(defrag.old2new_vertex[j]) += pull_amount.cast<double>();
-
-			// update positions (only the viewer)
-			globalvars::viewer.get_mesh_buffer().set_vertex_positions(globalvars::displaced_vertex_positions.cast<float>());
-
-			// Must rerender now.
-			should_redraw = true;
+			// Apply Laplacian deformation with fixed vertices and dragged vertex as constraints
+			try {
+				// Extract mesh data - USE ORIGINAL POSITIONS, not current deformed ones!
+				mohecore::Laplacian_deformation deformer(globalvars::original_mesh);
+				Eigen::MatrixXd positions(globalvars::original_mesh.n_active_vertices(), 3);
+				Eigen::MatrixXi faces;
+				
+				// Get ORIGINAL positions and build mapping
+				int idx = 0;
+				std::map<int, int> old_to_new;
+				for(int vid = 0; vid < globalvars::original_mesh.n_total_vertices(); ++vid) {
+					auto vert = globalvars::original_mesh.vertex_at(vid);
+					if(vert.is_active()) {
+						old_to_new[vid] = idx;
+						positions.row(idx) = vert.xyz();
+						idx++;
+					}
+				}
+				
+				// Get faces from original mesh
+				std::vector<std::vector<int>> face_list;
+				for(int fid = 0; fid < globalvars::original_mesh.n_total_faces(); ++fid) {
+					auto face = globalvars::original_mesh.face_at(fid);
+					if(face.is_active()) {
+						auto he = face.half_edge();
+						auto he_start = he;
+						std::vector<int> fverts;
+						do {
+							fverts.push_back(old_to_new[he.origin().index()]);
+							he = he.next();
+						} while(!he.is_equal(he_start) && fverts.size() < 10);
+						if(fverts.size() == 3) face_list.push_back(fverts);
+					}
+				}
+				faces.resize(face_list.size(), 3);
+				for(size_t i = 0; i < face_list.size(); ++i) {
+					faces.row(i) << face_list[i][0], face_list[i][1], face_list[i][2];
+				}
+				
+				// Build constraint list: fixed vertices + pulled vertex
+				std::vector<int> handles;
+				int n_constraints = globalvars::fixed_handles.size() + 1;
+				Eigen::MatrixXd u_c(n_constraints, 3);
+				
+				// Add fixed vertices (remain at original positions)
+				for(size_t i = 0; i < globalvars::fixed_handles.size(); ++i) {
+					int vid = globalvars::fixed_handles[i];
+					handles.push_back(vid);
+					u_c.row(i) = positions.row(vid);  // Stay at original position
+				}
+				
+				// Add pulled vertex (moves to new position)
+				handles.push_back(pulled_vert);
+				// Get the CURRENT deformed position (not original)
+				auto current_vert = globalvars::mesh.vertex_at(pulled_vert);
+				Eigen::RowVector3d current_deformed_pos = current_vert.xyz().transpose();
+				Eigen::Vector3d pull_vec = pull_amount.cast<double>();
+				Eigen::RowVector3d displacement = pull_vec.transpose();
+				// Target position = current deformed position + drag displacement
+				u_c.row(globalvars::fixed_handles.size()) = current_deformed_pos + displacement;
+				
+				// Use ARAP solver with rotations (fewer iterations for interactive performance)
+				std::string weight_type = (globalvars::weight_choice == 0) ? "cotangent" : "uniform";
+				auto p_final = deformer.solve_arap(positions, faces, handles, u_c, weight_type, 3, 1e-4);
+				
+				// Compute diagnostics
+				// double constraint_error = 0.0;
+				// for(size_t i = 0; i < handles.size(); ++i) {
+				// 	int h = handles[i];
+				// 	Eigen::RowVector3d diff = p_final.row(h) - u_c.row(i);
+				// 	constraint_error += diff.norm();
+				// }
+				// constraint_error /= handles.size();
+				
+				// Eigen::MatrixXd residual = L * p_final - delta;
+				// double residual_norm = residual.norm() / sqrt(residual.rows() * residual.cols());
+				
+				// // Print diagnostics only occasionally (every 10th frame) to reduce console spam
+				// static int frame_count = 0;
+				// if(frame_count % 10 == 0) {
+				// 	printf("Deformation: fixed=%zu, pulled=%d, constraint_err=%.2e, residual=%.2e\n", 
+				// 	       globalvars::fixed_handles.size(), pulled_vert, constraint_error, residual_norm);
+				// }
+				// frame_count++;
+				
+				// Update mesh
+				idx = 0;
+				for(int vid = 0; vid < globalvars::mesh.n_total_vertices(); ++vid) {
+					auto vert = globalvars::mesh.vertex_at(vid);
+					if(vert.is_active()) {
+						vert.data().xyz = p_final.row(idx).transpose();  // xyz is Vector3d (column vector)
+						globalvars::displaced_vertex_positions.col(idx) = p_final.row(idx).transpose();
+						idx++;
+					}
+				}
+				
+				globalvars::viewer.get_mesh_buffer().set_vertex_positions(
+					globalvars::displaced_vertex_positions.cast<float>());
+				
+				should_redraw = true;
+			}
+			catch(const std::exception& e) {
+				printf("Deformation error: %s\n", e.what());
+			}
 		}
 	}
 
@@ -214,8 +358,8 @@ void simplify_pressed(int)
 		globalvars::viewer.get_mesh_buffer().rebuild(globalvars::mesh, defrag);
 	}
 	
-	// update colors to show the 3 lowest cost edges
-	update_lowest_cost_edge_colors();
+	// Removed edge collapse visualization for performance
+	// update_lowest_cost_edge_colors();
 	
 	glutPostRedisplay();
 
@@ -241,7 +385,275 @@ void show_spheres_pressed(int)
 	glutPostRedisplay();
 }
 
+// ======================================================
+// Laplacian Deformation Callbacks
+// ======================================================
+
+void update_handle_visualization()
+{
+	// Visualize handles with colored spheres
+	int total_handles = globalvars::fixed_handles.size() + globalvars::movable_handles.size();
+	
+	if(total_handles == 0)
+	{
+		// Clear spheres - use a dummy vertex with transparent color
+		Eigen::VectorXi sphere_indices(1);
+		sphere_indices << 0;
+		Eigen::Matrix4Xf sphere_colors(4, 1);
+		sphere_colors << 0.0f, 0.0f, 0.0f, 0.0f;  // Fully transparent
+		globalvars::viewer.get_mesh_buffer().set_colorful_spheres(sphere_indices, sphere_colors);
+		return;
+	}
+	
+	Eigen::VectorXi sphere_indices(total_handles);
+	Eigen::Matrix4Xf sphere_colors(4, total_handles);
+	
+	int idx = 0;
+	
+	// Fixed handles - RED
+	for(int v : globalvars::fixed_handles)
+	{
+		sphere_indices(idx) = v;
+		sphere_colors.col(idx) << 1.0f, 0.0f, 0.0f, 1.0f;  // Red
+		idx++;
+	}
+	
+	// Movable handles - GREEN
+	for(int v : globalvars::movable_handles)
+	{
+		sphere_indices(idx) = v;
+		sphere_colors.col(idx) << 0.0f, 1.0f, 0.0f, 1.0f;  // Green
+		idx++;
+	}
+	
+	globalvars::viewer.get_mesh_buffer().set_colorful_spheres(sphere_indices, sphere_colors);
 }
+
+void fix_mode_callback(int)
+{
+	// "Fix" button - enters fix points mode (select vertices to fix)
+	globalvars::fix_vertex_mode = 1;
+	globalvars::deformation_mode = 0;
+	globalvars::viewer.get_mouse_function() = Mesh_viewer::MOUSE_SELECT;
+	printf("\n[MODE] Fix button clicked - FIX POINTS MODE\n");
+	printf("  Click vertices to fix them (red spheres)\n");
+	printf("  Click again to unfix\n");
+	glutPostRedisplay();
+}
+
+void move_mode_callback(int)
+{
+	// "Move" button - enters drag points mode (deform by dragging)
+	globalvars::deformation_mode = 1;
+	globalvars::fix_vertex_mode = 0;
+	globalvars::viewer.get_mouse_function() = Mesh_viewer::MOUSE_MOVE_VERTEX;
+	printf("\n[MODE] Move button clicked - DRAG POINTS MODE\n");
+	printf("  Drag vertices to deform the mesh\n");
+	printf("  Fixed vertices (red) will stay in place\n");
+	glutPostRedisplay();
+}
+
+void toggle_deformation_mode(int)
+{
+	globalvars::deformation_mode = !globalvars::deformation_mode;
+	
+	if(globalvars::deformation_mode)
+	{
+		printf("\n=== LAPLACIAN DEFORMATION MODE ENABLED ===\n");
+		printf("Click vertices to add fixed handles (RED)\n");
+		printf("Shift+Click vertices to add movable handles (GREEN)\n");
+		printf("Click again to remove handles\n");
+		printf("Use 'Move vertex' mode to drag movable handles\n");
+		printf("==========================================\n\n");
+		
+		// Switch to select mode
+		globalvars::viewer.get_mouse_function() = Mesh_viewer::MOUSE_SELECT;
+	}
+	else
+	{
+		printf("Deformation mode disabled\n");
+	}
+	
+	freeglutcallback::update_handle_visualization();
+	glutPostRedisplay();
+}
+
+void clear_handles_pressed(int)
+{
+	globalvars::fixed_handles.clear();
+	globalvars::movable_handles.clear();
+	globalvars::handle_displacements.clear();
+	
+	printf("Cleared all handles\n");
+	
+	freeglutcallback::update_handle_visualization();
+	glutPostRedisplay();
+}
+
+void apply_deformation_pressed(int)
+{
+	if(globalvars::fixed_handles.empty() && globalvars::movable_handles.empty())
+	{
+		printf("ERROR: No handles defined! Add handles first.\n");
+		return;
+	}
+	
+	std::string weight_type = (globalvars::weight_choice == 0) ? "cotangent" : "uniform";
+	
+	printf("\n=== Applying Laplacian Deformation ===\n");
+	printf("Fixed handles: %zu\n", globalvars::fixed_handles.size());
+	printf("Movable handles: %zu\n", globalvars::movable_handles.size());
+	printf("Weight type: %s\n", weight_type.c_str());
+	
+	try
+	{
+		// Create deformation object
+		mohecore::Laplacian_deformation deformer(globalvars::mesh);
+		
+		// Extract mesh data
+		Eigen::MatrixXd positions;
+		Eigen::MatrixXi faces;
+		
+		// Manual extraction (simpler than using the helper)
+		int n_verts = globalvars::mesh.n_active_vertices();
+		int n_faces = globalvars::mesh.n_active_faces();
+		
+		std::map<int, int> old_to_new;
+		int new_idx = 0;
+		
+		positions.resize(n_verts, 3);
+		for(int vid = 0; vid < globalvars::mesh.n_total_vertices(); ++vid)
+		{
+			auto vert = globalvars::mesh.vertex_at(vid);
+			if(vert.is_active())
+			{
+				old_to_new[vid] = new_idx;
+				positions.row(new_idx) = vert.xyz();
+				new_idx++;
+			}
+		}
+		
+		faces.resize(n_faces, 3);
+		int face_idx = 0;
+		for(int fid = 0; fid < globalvars::mesh.n_total_faces(); ++fid)
+		{
+			auto face = globalvars::mesh.face_at(fid);
+			if(face.is_active())
+			{
+				auto he = face.half_edge();
+				auto he_start = he;
+				std::vector<int> face_verts;
+				do {
+					face_verts.push_back(old_to_new[he.origin().index()]);
+					he = he.next();
+				} while(!he.is_equal(he_start));
+				
+				if(face_verts.size() == 3)
+				{
+					faces.row(face_idx) << face_verts[0], face_verts[1], face_verts[2];
+					face_idx++;
+				}
+			}
+		}
+		if(face_idx < n_faces) faces.conservativeResize(face_idx, 3);
+		
+		// Build Laplacian
+		printf("Building Laplacian matrix...\n");
+		auto L = deformer.build_laplacian(positions, faces, weight_type);
+		printf("  Laplacian: %ld x %ld, non-zeros: %ld\n", L.rows(), L.cols(), L.nonZeros());
+		
+		// Compute Laplacian coordinates
+		auto delta = deformer.compute_laplacian_coordinates(L, positions);
+		
+		// Combine all handles
+		std::vector<int> all_handles = globalvars::fixed_handles;
+		all_handles.insert(all_handles.end(), 
+		                  globalvars::movable_handles.begin(), 
+		                  globalvars::movable_handles.end());
+		
+		// Build constraint positions
+		Eigen::MatrixXd u_c(all_handles.size(), 3);
+		for(size_t i = 0; i < globalvars::fixed_handles.size(); ++i)
+		{
+			int vid = globalvars::fixed_handles[i];
+			u_c.row(i) = positions.row(vid);  // Fixed at original position
+		}
+		for(size_t i = 0; i < globalvars::movable_handles.size(); ++i)
+		{
+			int vid = globalvars::movable_handles[i];
+			size_t row_idx = globalvars::fixed_handles.size() + i;
+			u_c.row(row_idx) = positions.row(vid) + globalvars::handle_displacements[vid].transpose();
+		}
+		
+		// Solve using ARAP with iterative rotation updates
+		printf("Solving with ARAP (iterative rotation updates)...\n");
+		auto p_final = deformer.solve_arap(positions, faces, all_handles, u_c, weight_type, 10, 1e-6);
+		
+		// Compute diagnostics
+		double constraint_error = 0.0;
+		for(size_t i = 0; i < all_handles.size(); ++i)
+		{
+			constraint_error += (p_final.row(all_handles[i]) - u_c.row(i)).squaredNorm();
+		}
+		constraint_error = std::sqrt(constraint_error / all_handles.size());
+		
+		printf("\n=== Diagnostics ===\n");
+		printf("Constraint error (RMSE): %.2e\n", constraint_error);
+		printf("===================\n\n");
+		
+		// Update mesh positions
+		int active_idx = 0;
+		for(int vid = 0; vid < globalvars::mesh.n_total_vertices(); ++vid)
+		{
+			auto vert = globalvars::mesh.vertex_at(vid);
+			if(vert.is_active())
+			{
+				int idx = old_to_new[vid];
+				vert.data().xyz = p_final.row(idx).transpose();  // xyz is Vector3d (column vector)
+				globalvars::displaced_vertex_positions.col(active_idx) = p_final.row(idx).transpose();
+				active_idx++;
+			}
+		}
+		
+		// Update viewer
+		globalvars::viewer.get_mesh_buffer().set_vertex_positions(
+			globalvars::displaced_vertex_positions.cast<float>());
+		
+		printf("Deformation applied successfully!\n\n");
+	}
+	catch(const std::exception& e)
+	{
+		printf("ERROR during deformation: %s\n", e.what());
+	}
+	
+	glutPostRedisplay();
+}
+
+void reset_mesh_pressed(int)
+{
+	// Restore original mesh
+	globalvars::mesh.copy(globalvars::original_mesh);
+	
+	// Restore original positions
+	globalvars::displaced_vertex_positions = globalvars::original_vertex_positions;
+	
+	// Clear handles and displacements
+	globalvars::handle_displacements.clear();
+	
+	// Update viewer
+	mohecore::Mesh_connectivity::Defragmentation_maps defrag;
+	globalvars::mesh.compute_defragmention_maps(defrag);
+	globalvars::viewer.get_mesh_buffer().rebuild(globalvars::mesh, defrag);
+	
+	// Update handle visualization
+	freeglutcallback::update_handle_visualization();
+	
+	printf("Mesh reset to original state\n");
+	glutPostRedisplay();
+}
+
+}
+
 
 
 int main(int argc, char * argv[])
@@ -300,8 +712,8 @@ int main(int argc, char * argv[])
 		globalvars::viewer.get_mesh_buffer().rebuild(globalvars::mesh, defrag);
 	}
 	
-	// Show the 3 lowest cost edges initially
-	freeglutcallback::update_lowest_cost_edge_colors();
+	// Removed edge collapse visualization for performance
+	// freeglutcallback::update_lowest_cost_edge_colors();
 
 	//
 	// Add radio buttons to see which mesh components to view
@@ -354,13 +766,69 @@ int main(int argc, char * argv[])
 
 
 	//
-	// Save the initial vertex positions
+	// Save the initial vertex positions and original mesh
 	//
-	globalvars::displaced_vertex_positions.resize(3,globalvars::mesh.n_active_vertices() );
-	for (int i = 0 ; i < globalvars::mesh.n_active_vertices() ; ++i)
+	globalvars::displaced_vertex_positions.resize(3, globalvars::mesh.n_active_vertices());
+	globalvars::original_vertex_positions.resize(3, globalvars::mesh.n_active_vertices());
+	for(int i = 0; i < globalvars::mesh.n_active_vertices(); ++i)
 	{
-		globalvars::displaced_vertex_positions.col(i) = globalvars::mesh.vertex_at(i).xyz();
+		Eigen::Vector3d pos = globalvars::mesh.vertex_at(i).xyz();
+		globalvars::displaced_vertex_positions.col(i) = pos;
+		globalvars::original_vertex_positions.col(i) = pos;
 	}
+	
+	// Save original mesh for reset
+	globalvars::original_mesh.copy(globalvars::mesh);
+
+	//
+	// Add Laplacian Deformation controls
+	//
+	globalvars::glui->add_separator();
+	
+	GLUI_Panel* panel_laplacian = globalvars::glui->add_panel("Laplacian Deformation");
+	
+	// Fix button - enters fix points mode (select vertices to fix)
+	GLUI_Button* btn_fix = globalvars::glui->add_button_to_panel(
+		panel_laplacian, "Fix (click to fix)", -1,
+		freeglutcallback::fix_mode_callback);
+	btn_fix->set_w(250);
+	
+	// Move button - enters drag points mode (deform by dragging)
+	GLUI_Button* btn_move = globalvars::glui->add_button_to_panel(
+		panel_laplacian, "Move (drag to deform)", -1,
+		freeglutcallback::move_mode_callback);
+	btn_move->set_w(250);
+	
+	// Clear fixed vertices button
+	GLUI_Button* button_clear_fixed = globalvars::glui->add_button_to_panel(
+		panel_laplacian, 
+		"Clear Fixed Vertices", 
+		-1, 
+		freeglutcallback::clear_handles_pressed);
+	button_clear_fixed->set_w(250);
+	
+	globalvars::glui->add_separator_to_panel(panel_laplacian);
+	
+	// Weight type radio buttons
+	GLUI_RadioGroup* radio_weight = globalvars::glui->add_radiogroup_to_panel(
+		panel_laplacian, 
+		&globalvars::weight_choice);
+	globalvars::glui->add_radiobutton_to_group(radio_weight, "Cotangent weights");
+	globalvars::glui->add_radiobutton_to_group(radio_weight, "Uniform weights");
+	radio_weight->set_int_val(0);  // Default to cotangent
+	
+	globalvars::glui->add_separator_to_panel(panel_laplacian);
+	
+	// Reset mesh button
+	GLUI_Button* button_reset = globalvars::glui->add_button_to_panel(
+		panel_laplacian, 
+		"Reset Mesh", 
+		-1, 
+		freeglutcallback::reset_mesh_pressed);
+	button_reset->set_w(250);
+	GLUI_StaticText* text5 = globalvars::glui->add_statictext("4. Switch to 'Move vertex' mode");
+	GLUI_StaticText* text6 = globalvars::glui->add_statictext("5. Drag movable handles");
+	GLUI_StaticText* text7 = globalvars::glui->add_statictext("6. Click 'Apply Deformation'");
 
 	// Sync all glui variables
 	globalvars::glui->sync_live();
@@ -374,3 +842,4 @@ int main(int argc, char * argv[])
 
 	return 0;
 }
+

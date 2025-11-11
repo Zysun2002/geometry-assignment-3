@@ -24,10 +24,8 @@ namespace minimesh
 namespace mohecore
 {
 
-// Forward declaration
 class Simplifier;
 
-// Structure to represent a quadric (4x4 matrix for error metric)
 struct Quadric 
 {
     Eigen::Matrix4d Q;
@@ -39,15 +37,13 @@ struct Quadric
     Eigen::Vector3d findOptimalPosition(const Eigen::Vector3d& v1, const Eigen::Vector3d& v2) const;
 };
 
-// Structure to represent an edge collapse operation
 struct EdgeCollapse 
 {
-    int he_index;           // Half-edge to collapse
-    int v1, v2;             // Vertices of the edge (v1 will be kept, v2 will be removed)
-    double cost;            // Cost of the collapse
-    Eigen::Vector3d new_pos; // New position for the remaining vertex
+    int he_index;        
+    int v1, v2;            
+    double cost;           
+    Eigen::Vector3d new_pos; 
     
-    // For priority queue (min-heap based on cost)
     bool operator>(const EdgeCollapse& other) const;
 };
 
@@ -89,14 +85,11 @@ struct EdgeCollapse
 class Simplifier
 {
 public:
-	// Trivial constructor
 	Simplifier(Mesh_connectivity & mesh_in): _m(mesh_in), _proxy_mesh() {}
 
-	// Get the underlying mesh
 	Mesh_connectivity & mesh() { return _m; }
 	const Mesh_connectivity & mesh() const { return _m; }
 	
-	// Get the proxy mesh
 	Mesh_connectivity & proxy_mesh() { return _proxy_mesh; }
 	const Mesh_connectivity & proxy_mesh() const { return _proxy_mesh; }
 
@@ -112,12 +105,9 @@ public:
   bool simplify_once();
 
 private:
-	// pointer to the mesh that we are working on.
 	Mesh_connectivity & _m;
-	// proxy mesh for testing operations
 	Mesh_connectivity _proxy_mesh;
 	
-	// Helper methods for QSlim algorithm
 	void initializeVertexQuadrics(std::map<int, Quadric>& vertex_quadrics);
 	
 	void buildInitialEdgeQueue(const std::map<int, Quadric>& vertex_quadrics,
@@ -148,8 +138,7 @@ private:
 	                    std::set<std::pair<int,int>>& processed_edges);
 	
 	bool wouldCreateNonManifold(int v1, int v2);
-	
-	// Methods for visualizing edge costs
+
 	
 };
 

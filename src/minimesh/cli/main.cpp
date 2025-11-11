@@ -26,6 +26,7 @@ fs::path mesh_path = "E:/Ziyu/workspace/course/geometryModeling/assignment_2/ZIy
 #include <minimesh/core/mohe/mesh_connectivity.hpp>
 #include <minimesh/core/mohe/mesh_io.hpp>
 #include <minimesh/core/mohe/mesh_simplification.hpp>
+#include <minimesh/core/mohe/laplacian_deformation.hpp>
 
 using namespace minimesh;
 
@@ -76,57 +77,19 @@ void write_sphere_mesh()
 
 int main(int argc, char **argv)
 {
-
+  // Create mesh and Laplacian deformation object
   mohecore::Mesh_connectivity mesh;
-  mohecore::Mesh_io io(mesh);
-  mohecore::Simplifier simp(mesh);
-  // mohecore::Loop_subdivider subdiv(mesh);
+  mohecore::Laplacian_deformation laplacian_def(mesh);
 
-
-  printf("reading example mesh \n");
-  io.read_obj_general((mesh_path / "cow_head.obj").string().c_str());
-
-
-  int writing_index = 0;
-  auto check_sanity_and_write_mesh = [&io, &mesh, &writing_index]()
-  {
-    force_assert( mesh.check_sanity_slowly() );
-
-    printf("writing out_%d.obj \n", writing_index);
-
-    io.write_obj( MINIMESH_STR((out_path / ("out_" + std::to_string(writing_index) + ".obj")).string()) );
-    
-    ++writing_index;
-  };
-
-// //   // Now check that the mesh is sane and write it  in both 
-// //   // .vtk and .obj formats
-//   // check_sanity_and_write_mesh();
-
-// //   // Flip the edge between vertices 4 and 5 (the diagonal from lower right to upper left)
-// //   // Note that the indices should become 0-index based rather than 1-index based.
-// //   printf("subdivision \n");
-//   // subdiv.subdivide_loop();
-  simp.simplify_once();
-  check_sanity_and_write_mesh();
-
-  // simp.simplify();
-  // check_sanity_and_write_mesh();
-
-//   // subdiv.subdivide_loop();
-//   // check_sanity_and_write_mesh();
-
-//   // subdiv.subdivide_loop();
-//   // check_sanity_and_write_mesh();
-
-
-// //   modi.flip_edge( modi.get_halfedge_between_vertices(4-1, 5-1) );
-// //   check_sanity_and_write_mesh();
-
-// //   // Now flip back the edge again
-// //   printf("flipping edge again ...\n");
-// //   modi.flip_edge( modi.get_halfedge_between_vertices(2-1, 7-1) );
-// //   check_sanity_and_write_mesh();
+  // Run the Laplacian deformation test
+  // This will:
+  // 1. Load woody-lo.obj
+  // 2. Build Laplacian matrix with cotangent weights
+  // 3. Compute Laplacian coordinates
+  // 4. Apply constraints (fix bottom, pull top)
+  // 5. Solve the linear system
+  // 6. Merge results and save deformed mesh
+  laplacian_def.run_test();
 
   return 0;
 } // end of main()
