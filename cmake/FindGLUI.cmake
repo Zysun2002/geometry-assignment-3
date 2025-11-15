@@ -17,8 +17,16 @@
 
 if(WIN32)
 
-  find_library(GLUI_LIBRARIES
-    NAMES glui_static glui_staticd
+  find_library(GLUI_LIBRARY_RELEASE
+    NAMES glui_static
+    PATH_SUFFIXES lib
+    PATHS
+    ${GLUI_ROOT}
+    ${GLUI_DIR}
+    )
+  
+  find_library(GLUI_LIBRARY_DEBUG
+    NAMES glui_staticd
     PATH_SUFFIXES lib
     PATHS
     ${GLUI_ROOT}
@@ -33,6 +41,18 @@ if(WIN32)
     ${GLUI_ROOT}
     ${GLUI_DIR}
     )
+  
+  # Set up the libraries variable with optimized/debug keywords
+  if(GLUI_LIBRARY_DEBUG AND GLUI_LIBRARY_RELEASE)
+    set(GLUI_LIBRARIES
+      optimized ${GLUI_LIBRARY_RELEASE}
+      debug ${GLUI_LIBRARY_DEBUG}
+    )
+  elseif(GLUI_LIBRARY_RELEASE)
+    set(GLUI_LIBRARIES ${GLUI_LIBRARY_RELEASE})
+  elseif(GLUI_LIBRARY_DEBUG)
+    set(GLUI_LIBRARIES ${GLUI_LIBRARY_DEBUG})
+  endif()
 
 elseif(APPLE)
 

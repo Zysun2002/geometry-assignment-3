@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.11)
+
 project(minimesh)
 
 
@@ -7,6 +8,11 @@ project(minimesh)
 ##
 set(MINIMESH_SOURCE_DIR  ${PROJECT_SOURCE_DIR})
 include("${PROJECT_SOURCE_DIR}/cmake/minimesh.cmake")
+
+# Force multi-configuration for Visual Studio AFTER project() call
+if(MSVC)
+  set(CMAKE_CONFIGURATION_TYPES "Debug;Release;MinSizeRel;RelWithDebInfo" CACHE STRING "Available build configurations" FORCE)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

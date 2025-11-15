@@ -18,16 +18,32 @@
 
 if(WIN32)
 
-  find_library(FREEGLUT_LIBRARIES
-    NAMES freeglut  freeglutd
+  find_library(FREEGLUT_LIBRARY_RELEASE
+    NAMES freeglut
     PATH_SUFFIXES lib
     PATHS
     ${FREEGLUT_ROOT}
     ${FREEGLUT_DIR}
     )
   
-  find_file(FREEGLUT_DLLS
-    NAMES freeglut.dll freeglutd.dll 
+  find_library(FREEGLUT_LIBRARY_DEBUG
+    NAMES freeglutd
+    PATH_SUFFIXES lib
+    PATHS
+    ${FREEGLUT_ROOT}
+    ${FREEGLUT_DIR}
+    )
+  
+  find_file(FREEGLUT_DLL_RELEASE
+    NAMES freeglut.dll
+    PATH_SUFFIXES bin
+    PATHS
+    ${FREEGLUT_ROOT}
+    ${FREEGLUT_DIR}
+    )
+  
+  find_file(FREEGLUT_DLL_DEBUG
+    NAMES freeglutd.dll 
     PATH_SUFFIXES bin
     PATHS
     ${FREEGLUT_ROOT}
@@ -40,6 +56,30 @@ if(WIN32)
     ${FREEGLUT_ROOT}
     ${FREEGLUT_DIR}
     )
+  
+  # Set up the libraries variable with optimized/debug keywords
+  if(FREEGLUT_LIBRARY_DEBUG AND FREEGLUT_LIBRARY_RELEASE)
+    set(FREEGLUT_LIBRARIES
+      optimized ${FREEGLUT_LIBRARY_RELEASE}
+      debug ${FREEGLUT_LIBRARY_DEBUG}
+    )
+  elseif(FREEGLUT_LIBRARY_RELEASE)
+    set(FREEGLUT_LIBRARIES ${FREEGLUT_LIBRARY_RELEASE})
+  elseif(FREEGLUT_LIBRARY_DEBUG)
+    set(FREEGLUT_LIBRARIES ${FREEGLUT_LIBRARY_DEBUG})
+  endif()
+  
+  # Set up the DLL variable
+  if(FREEGLUT_DLL_DEBUG AND FREEGLUT_DLL_RELEASE)
+    set(FREEGLUT_DLLS
+      optimized ${FREEGLUT_DLL_RELEASE}
+      debug ${FREEGLUT_DLL_DEBUG}
+    )
+  elseif(FREEGLUT_DLL_RELEASE)
+    set(FREEGLUT_DLLS ${FREEGLUT_DLL_RELEASE})
+  elseif(FREEGLUT_DLL_DEBUG)
+    set(FREEGLUT_DLLS ${FREEGLUT_DLL_DEBUG})
+  endif()
 
 elseif(APPLE)
 

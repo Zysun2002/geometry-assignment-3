@@ -1,74 +1,19 @@
-//
-// This file sets up the debugger for vscode
-// See https://github.com/Microsoft/vscode-cpptools/blob/master/launch.md
-//
 {
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "name": "(Windows) Launch",
-      "type": "cppvsdbg",
-      "request": "launch",
-      "stopAtEntry": false,
-      "environment": [],
-      "externalConsole": false,
-      "visualizerFile": "${workspaceRoot}/debugger/eigen/msvc/eigen.natvis",
-      //
-      "program": "${workspaceRoot}/build-dbg/bin/cartelgui",
-      "cwd": "${workspaceRoot}/build-dbg/",
-      "args": [
-        "Mesh/cube.obj",
-      ]
-    }, //  End of configurations # 0
-    {
-      "name": "(gdb) Launch",
-      "type": "cppdbg",
-      "request": "launch",
-      "stopAtEntry": false,
-      "environment": [],
-      "externalConsole": false,
-      "MIMode": "gdb",
-      //
-      "setupCommands": [
+    "version": "0.2.0",
+    "configurations": [
         {
-          "description": "Enable pretty-printing for gdb",
-          "text": "-enable-pretty-printing",
-          "ignoreFailures": true
+            "name": "(Windows) Debug minimeshgui - woody-lo.obj",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/minimeshgui.exe",
+            "args": [
+                "${workspaceFolder}/meshes/woody-lo.obj"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": ""
         }
-      ],
-      //
-      "program": "${workspaceRoot}/build-dbg/bin/minimeshgui",
-      "cwd": "${workspaceRoot}/build-dbg/",
-      //
-      "args": [
-        "../mesh/cube.obj",
-      ],
-    }, //  End of configurations # 1
-    {
-      "name": "(Windows) CLI Debug",
-      "type": "cppvsdbg",
-      "request": "launch",
-      "stopAtEntry": false,
-      "environment": [],
-      "externalConsole": false,
-      "console": "integratedTerminal",
-      "visualizerFile": "${workspaceRoot}/debugger/eigen/msvc/eigen.natvis",
-      "program": "${workspaceRoot}/build/bin/minimeshcli.exe",
-      "cwd": "${workspaceRoot}/build/",
-      "args": []
-    }, //  End of configurations # 2
-        {
-      "name": "(Windows) GUI Debug",
-      "type": "cppvsdbg",
-      "request": "launch",
-      "stopAtEntry": false,
-      "environment": [],
-      "externalConsole": false,
-      "console": "integratedTerminal",
-      "visualizerFile": "${workspaceRoot}/debugger/eigen/msvc/eigen.natvis",
-      "program": "${workspaceRoot}/build/bin/minimeshgui.exe",
-      "cwd": "${workspaceRoot}/build/",
-      "args": ["../mesh/example_sphere.obj"]
-    } //  End of configurations # 2
-] // End of configurationss
+    ]
 }

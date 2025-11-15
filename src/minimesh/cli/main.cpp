@@ -81,15 +81,8 @@ int main(int argc, char **argv)
   mohecore::Mesh_connectivity mesh;
   mohecore::Laplacian_deformation laplacian_def(mesh);
 
-  // Run the Laplacian deformation test
-  // This will:
-  // 1. Load woody-lo.obj
-  // 2. Build Laplacian matrix with cotangent weights
-  // 3. Compute Laplacian coordinates
-  // 4. Apply constraints (fix bottom, pull top)
-  // 5. Solve the linear system
-  // 6. Merge results and save deformed mesh
-  laplacian_def.run_test();
+  // CLI functionality removed - use the GUI version instead
+  std::cout << "CLI version is deprecated. Please use the GUI version (minimeshgui.exe)" << std::endl;
 
   return 0;
 } // end of main()

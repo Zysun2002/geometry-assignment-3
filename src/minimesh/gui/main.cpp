@@ -32,9 +32,6 @@
 
 using namespace minimesh;
 
-// ======================================================
-// Global variables
-// ======================================================
 namespace globalvars
 {
 Mesh_viewer viewer;
@@ -109,7 +106,6 @@ void keyboard_arrows_pressed(int c, int x, int y)
 		glutPostRedisplay();
 }
 
-
 void mouse_pushed(int button, int state, int x, int y)
 {
 	bool should_redraw = false;
@@ -173,9 +169,6 @@ void mouse_moved(int x, int y)
 	bool should_redraw = false;
 	should_redraw = should_redraw || globalvars::viewer.mouse_moved(x, y);
 
-	//
-	// Handle vertex displacement with Laplacian deformation
-	//
 	{
 		bool has_pull_performed;
 		Eigen::Vector3f pull_amount;
@@ -186,14 +179,11 @@ void mouse_moved(int x, int y)
 		{
 			force_assert(pulled_vert != Mesh_viewer::invalid_index);
 
-			// Apply Laplacian deformation with fixed vertices and dragged vertex as constraints
 			try {
-				// Extract mesh data - USE ORIGINAL POSITIONS, not current deformed ones!
 				mohecore::Laplacian_deformation deformer(globalvars::original_mesh);
 				Eigen::MatrixXd positions(globalvars::original_mesh.n_active_vertices(), 3);
 				Eigen::MatrixXi faces;
 				
-				// Get ORIGINAL positions and build mapping
 				int idx = 0;
 				std::map<int, int> old_to_new;
 				for(int vid = 0; vid < globalvars::original_mesh.n_total_vertices(); ++vid) {
@@ -205,7 +195,6 @@ void mouse_moved(int x, int y)
 					}
 				}
 				
-				// Get faces from original mesh
 				std::vector<std::vector<int>> face_list;
 				for(int fid = 0; fid < globalvars::original_mesh.n_total_faces(); ++fid) {
 					auto face = globalvars::original_mesh.face_at(fid);
@@ -225,58 +214,30 @@ void mouse_moved(int x, int y)
 					faces.row(i) << face_list[i][0], face_list[i][1], face_list[i][2];
 				}
 				
-				// Build constraint list: fixed vertices + pulled vertex
-				std::vector<int> handles;
+				std::vector<int> handles; 
 				int n_constraints = globalvars::fixed_handles.size() + 1;
 				Eigen::MatrixXd u_c(n_constraints, 3);
 				
-				// Add fixed vertices (remain at original positions)
 				for(size_t i = 0; i < globalvars::fixed_handles.size(); ++i) {
 					int vid = globalvars::fixed_handles[i];
 					handles.push_back(vid);
-					u_c.row(i) = positions.row(vid);  // Stay at original position
+					u_c.row(i) = positions.row(vid);
 				}
 				
-				// Add pulled vertex (moves to new position)
 				handles.push_back(pulled_vert);
-				// Get the CURRENT deformed position (not original)
 				auto current_vert = globalvars::mesh.vertex_at(pulled_vert);
 				Eigen::RowVector3d current_deformed_pos = current_vert.xyz().transpose();
 				Eigen::Vector3d pull_vec = pull_amount.cast<double>();
 				Eigen::RowVector3d displacement = pull_vec.transpose();
-				// Target position = current deformed position + drag displacement
 				u_c.row(globalvars::fixed_handles.size()) = current_deformed_pos + displacement;
 				
-				// Use ARAP solver with rotations (fewer iterations for interactive performance)
-				std::string weight_type = (globalvars::weight_choice == 0) ? "cotangent" : "uniform";
-				auto p_final = deformer.solve_arap(positions, faces, handles, u_c, weight_type, 3, 1e-4);
+				auto p_final = deformer.solve_arap(positions, faces, handles, u_c, 3, 1e-4);
 				
-				// Compute diagnostics
-				// double constraint_error = 0.0;
-				// for(size_t i = 0; i < handles.size(); ++i) {
-				// 	int h = handles[i];
-				// 	Eigen::RowVector3d diff = p_final.row(h) - u_c.row(i);
-				// 	constraint_error += diff.norm();
-				// }
-				// constraint_error /= handles.size();
-				
-				// Eigen::MatrixXd residual = L * p_final - delta;
-				// double residual_norm = residual.norm() / sqrt(residual.rows() * residual.cols());
-				
-				// // Print diagnostics only occasionally (every 10th frame) to reduce console spam
-				// static int frame_count = 0;
-				// if(frame_count % 10 == 0) {
-				// 	printf("Deformation: fixed=%zu, pulled=%d, constraint_err=%.2e, residual=%.2e\n", 
-				// 	       globalvars::fixed_handles.size(), pulled_vert, constraint_error, residual_norm);
-				// }
-				// frame_count++;
-				
-				// Update mesh
 				idx = 0;
 				for(int vid = 0; vid < globalvars::mesh.n_total_vertices(); ++vid) {
 					auto vert = globalvars::mesh.vertex_at(vid);
 					if(vert.is_active()) {
-						vert.data().xyz = p_final.row(idx).transpose();  // xyz is Vector3d (column vector)
+						vert.data().xyz = p_final.row(idx).transpose();
 						globalvars::displaced_vertex_positions.col(idx) = p_final.row(idx).transpose();
 						idx++;
 					}
@@ -297,39 +258,7 @@ void mouse_moved(int x, int y)
 		glutPostRedisplay();
 }
 
-void update_lowest_cost_edge_colors()
-{
-    // Get the 3 lowest cost edges
-    mohecore::Simplifier simp(globalvars::mesh);
-    std::vector<mohecore::EdgeCollapse> lowest_cost_edges = simp.getLowestCostEdges(3);
-    
-    // Get defragmentation maps
-    mohecore::Mesh_connectivity::Defragmentation_maps defrag;
-    globalvars::mesh.compute_defragmention_maps(defrag);
-    
-    // Create and apply vertex colors
-    Eigen::Matrix4Xf vertex_colors = simp.createEdgeCostVertexColors(lowest_cost_edges, defrag);
-    globalvars::viewer.get_mesh_buffer().set_vertex_colors(vertex_colors);
-    
-    // Create and apply face colors
-    Eigen::Matrix4Xf face_colors = simp.createEdgeCostFaceColors(lowest_cost_edges, defrag);
-    globalvars::viewer.get_mesh_buffer().set_face_colors(face_colors);
-    
-    // Print edge information to console
-    std::cout << "\n=== 3 Lowest Cost Edges ===" << std::endl;
-    for (size_t i = 0; i < lowest_cost_edges.size(); ++i) {
-        const mohecore::EdgeCollapse& collapse = lowest_cost_edges[i];
-        std::string color_name;
-        if (i == 0) color_name = "Red";
-        else if (i == 1) color_name = "Orange"; 
-        else if (i == 2) color_name = "Yellow";
-        
-        std::cout << "Rank " << (i+1) << " (" << color_name << "): Edge (" 
-                  << collapse.v1 << " -> " << collapse.v2 << ") Cost: " 
-                  << collapse.cost << std::endl;
-    }
-    std::cout << "=========================" << std::endl;
-}
+void update_lowest_cost_edge_colors(){}
 
 
 void subdivide_pressed(int)
@@ -341,53 +270,15 @@ void subdivide_pressed(int)
 void simplify_pressed(int)
 {
 
-	// printf("Simplify button was pressed to remove %d entities \n", globalvars::num_entities_to_simplify);
-
-  // std::cout<<globalvars::num_entities_to_simplify<<std::endl;
-
-  mohecore::Simplifier simp(globalvars::mesh);
-
-  // simp.simplify_once();
-  // globalvars::num_entities_to_simplify = 18000;
-  simp.simplify_test_ahead(globalvars::num_entities_to_simplify);
-
-  	// // copy from main, re-render the mesh
-	{
-		mohecore::Mesh_connectivity::Defragmentation_maps defrag;
-		globalvars::mesh.compute_defragmention_maps(defrag);
-		globalvars::viewer.get_mesh_buffer().rebuild(globalvars::mesh, defrag);
-	}
-	
-	// Removed edge collapse visualization for performance
-	// update_lowest_cost_edge_colors();
-	
-	glutPostRedisplay();
-
+	std::cout<<"not implemented yet"<<std::endl;
 }
 
 
 void show_spheres_pressed(int)
 {
-	// 
-	// Sample of using Mesh_viewer for MESH DEFORMATION ASSIGNMENT
-	// Here I color the vertices (draw spheres on them)
-	// Note that if you call rebuild, you have to redraw everything.
-	//
-	Eigen::VectorXi sphere_indices(3);
-	sphere_indices << 0, 1, 2;
-	Eigen::Matrix4Xf sphere_colors(4, 3);
-	sphere_colors.col(0) << 1, 1, 0, 1;
-	sphere_colors.col(1) << 0, 1, 1, 1;
-	sphere_colors.col(2) << 0, 0, 1, 1;
-
-	globalvars::viewer.get_mesh_buffer().set_colorful_spheres(sphere_indices, sphere_colors);
-
-	glutPostRedisplay();
+  std::cout<<"not implemented yet"<<std::endl;
 }
 
-// ======================================================
-// Laplacian Deformation Callbacks
-// ======================================================
 
 void update_handle_visualization()
 {
@@ -487,145 +378,6 @@ void clear_handles_pressed(int)
 	printf("Cleared all handles\n");
 	
 	freeglutcallback::update_handle_visualization();
-	glutPostRedisplay();
-}
-
-void apply_deformation_pressed(int)
-{
-	if(globalvars::fixed_handles.empty() && globalvars::movable_handles.empty())
-	{
-		printf("ERROR: No handles defined! Add handles first.\n");
-		return;
-	}
-	
-	std::string weight_type = (globalvars::weight_choice == 0) ? "cotangent" : "uniform";
-	
-	printf("\n=== Applying Laplacian Deformation ===\n");
-	printf("Fixed handles: %zu\n", globalvars::fixed_handles.size());
-	printf("Movable handles: %zu\n", globalvars::movable_handles.size());
-	printf("Weight type: %s\n", weight_type.c_str());
-	
-	try
-	{
-		// Create deformation object
-		mohecore::Laplacian_deformation deformer(globalvars::mesh);
-		
-		// Extract mesh data
-		Eigen::MatrixXd positions;
-		Eigen::MatrixXi faces;
-		
-		// Manual extraction (simpler than using the helper)
-		int n_verts = globalvars::mesh.n_active_vertices();
-		int n_faces = globalvars::mesh.n_active_faces();
-		
-		std::map<int, int> old_to_new;
-		int new_idx = 0;
-		
-		positions.resize(n_verts, 3);
-		for(int vid = 0; vid < globalvars::mesh.n_total_vertices(); ++vid)
-		{
-			auto vert = globalvars::mesh.vertex_at(vid);
-			if(vert.is_active())
-			{
-				old_to_new[vid] = new_idx;
-				positions.row(new_idx) = vert.xyz();
-				new_idx++;
-			}
-		}
-		
-		faces.resize(n_faces, 3);
-		int face_idx = 0;
-		for(int fid = 0; fid < globalvars::mesh.n_total_faces(); ++fid)
-		{
-			auto face = globalvars::mesh.face_at(fid);
-			if(face.is_active())
-			{
-				auto he = face.half_edge();
-				auto he_start = he;
-				std::vector<int> face_verts;
-				do {
-					face_verts.push_back(old_to_new[he.origin().index()]);
-					he = he.next();
-				} while(!he.is_equal(he_start));
-				
-				if(face_verts.size() == 3)
-				{
-					faces.row(face_idx) << face_verts[0], face_verts[1], face_verts[2];
-					face_idx++;
-				}
-			}
-		}
-		if(face_idx < n_faces) faces.conservativeResize(face_idx, 3);
-		
-		// Build Laplacian
-		printf("Building Laplacian matrix...\n");
-		auto L = deformer.build_laplacian(positions, faces, weight_type);
-		printf("  Laplacian: %ld x %ld, non-zeros: %ld\n", L.rows(), L.cols(), L.nonZeros());
-		
-		// Compute Laplacian coordinates
-		auto delta = deformer.compute_laplacian_coordinates(L, positions);
-		
-		// Combine all handles
-		std::vector<int> all_handles = globalvars::fixed_handles;
-		all_handles.insert(all_handles.end(), 
-		                  globalvars::movable_handles.begin(), 
-		                  globalvars::movable_handles.end());
-		
-		// Build constraint positions
-		Eigen::MatrixXd u_c(all_handles.size(), 3);
-		for(size_t i = 0; i < globalvars::fixed_handles.size(); ++i)
-		{
-			int vid = globalvars::fixed_handles[i];
-			u_c.row(i) = positions.row(vid);  // Fixed at original position
-		}
-		for(size_t i = 0; i < globalvars::movable_handles.size(); ++i)
-		{
-			int vid = globalvars::movable_handles[i];
-			size_t row_idx = globalvars::fixed_handles.size() + i;
-			u_c.row(row_idx) = positions.row(vid) + globalvars::handle_displacements[vid].transpose();
-		}
-		
-		// Solve using ARAP with iterative rotation updates
-		printf("Solving with ARAP (iterative rotation updates)...\n");
-		auto p_final = deformer.solve_arap(positions, faces, all_handles, u_c, weight_type, 10, 1e-6);
-		
-		// Compute diagnostics
-		double constraint_error = 0.0;
-		for(size_t i = 0; i < all_handles.size(); ++i)
-		{
-			constraint_error += (p_final.row(all_handles[i]) - u_c.row(i)).squaredNorm();
-		}
-		constraint_error = std::sqrt(constraint_error / all_handles.size());
-		
-		printf("\n=== Diagnostics ===\n");
-		printf("Constraint error (RMSE): %.2e\n", constraint_error);
-		printf("===================\n\n");
-		
-		// Update mesh positions
-		int active_idx = 0;
-		for(int vid = 0; vid < globalvars::mesh.n_total_vertices(); ++vid)
-		{
-			auto vert = globalvars::mesh.vertex_at(vid);
-			if(vert.is_active())
-			{
-				int idx = old_to_new[vid];
-				vert.data().xyz = p_final.row(idx).transpose();  // xyz is Vector3d (column vector)
-				globalvars::displaced_vertex_positions.col(active_idx) = p_final.row(idx).transpose();
-				active_idx++;
-			}
-		}
-		
-		// Update viewer
-		globalvars::viewer.get_mesh_buffer().set_vertex_positions(
-			globalvars::displaced_vertex_positions.cast<float>());
-		
-		printf("Deformation applied successfully!\n\n");
-	}
-	catch(const std::exception& e)
-	{
-		printf("ERROR during deformation: %s\n", e.what());
-	}
-	
 	glutPostRedisplay();
 }
 
